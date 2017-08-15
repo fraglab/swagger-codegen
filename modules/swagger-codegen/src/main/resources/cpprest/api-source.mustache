@@ -9,12 +9,21 @@
 #include <unordered_set>
 
 #include <boost/algorithm/string/replace.hpp>
+#include <boost/range/algorithm.hpp>
 
 {{#apiNamespaceDeclarations}}
 namespace {{this}} {
 {{/apiNamespaceDeclarations}}
 
 using namespace {{modelNamespace}};
+using namespace {{invokerNamespace}};
+
+namespace {
+    bool DescribesJsonType(utility::string_t str) 
+    {
+        return str.rfind(U("json")) != utility::string_t::npos;
+    }
+}
 
 {{classname}}::{{classname}}( std::shared_ptr<ApiClient> apiClient )
     : m_ApiClient(apiClient)
@@ -26,7 +35,7 @@ using namespace {{modelNamespace}};
 }
 
 {{#operation}}
-pplx::task<{{#returnType}}{{{returnType}}}{{/returnType}}{{^returnType}}void{{/returnType}}> {{classname}}::{{operationId}}({{#allParams}}{{{dataType}}} {{paramName}}{{^required}}{{/required}}{{#hasMore}}, {{/hasMore}}{{/allParams}})
+pplx::task<{{#returnType}}HttpResponseT<{{{returnType}}}>{{/returnType}}{{^returnType}}HttpResponse{{/returnType}}> {{classname}}::{{operationId}}({{#allParams}}{{{dataType}}} {{paramName}}{{^required}}{{/required}}{{#hasMore}}, {{/hasMore}}{{/allParams}})
 {
     {{#allParams}}{{#required}}{{^isPrimitiveType}}{{^isContainer}}
     // verify the required parameter '{{paramName}}' is set
@@ -47,6 +56,8 @@ pplx::task<{{#returnType}}{{{returnType}}}{{/returnType}}{{^returnType}}void{{/r
     std::map<utility::string_t, std::shared_ptr<HttpContent>> fileParams;
 
     std::unordered_set<utility::string_t> responseHttpContentTypes;
+    std::unordered_set<utility::string_t>::iterator it;
+
     {{#produces}}
     responseHttpContentTypes.insert( U("{{mediaType}}") );
     {{/produces}}
@@ -63,10 +74,10 @@ pplx::task<{{#returnType}}{{{returnType}}}{{/returnType}}{{^returnType}}void{{/r
         responseHttpContentType = U("application/json");
         {{/vendorExtensions.x-codegen-response.isString}}
     }
-    // JSON
-    else if ( responseHttpContentTypes.find(U("application/json")) != responseHttpContentTypes.end() )
+    // any JSON
+    else if ( responseHttpContentTypes.end() != ( it = boost::find_if(responseHttpContentTypes, DescribesJsonType) ) )
     {
-        responseHttpContentType = U("application/json");
+        responseHttpContentType = *it;
     }
     // multipart formdata
     else if( responseHttpContentTypes.find(U("multipart/form-data")) != responseHttpContentTypes.end() )
@@ -144,9 +155,9 @@ pplx::task<{{#returnType}}{{{returnType}}}{{/returnType}}{{^returnType}}void{{/r
     utility::string_t requestHttpContentType;
 
     // use JSON if possible
-    if ( consumeHttpContentTypes.size() == 0 || consumeHttpContentTypes.find(U("application/json")) != consumeHttpContentTypes.end() )
+    if ( consumeHttpContentTypes.size() == 0 || consumeHttpContentTypes.end() != ( it = boost::find_if(consumeHttpContentTypes, DescribesJsonType) ) )
     {
-        requestHttpContentType = U("application/json");
+        requestHttpContentType = *it;
         {{#bodyParam}}
         web::json::value json;
 
@@ -266,6 +277,7 @@ pplx::task<{{#returnType}}{{{returnType}}}{{/returnType}}{{^returnType}}void{{/r
         {
             throw ApiException(response.status_code()
                 , U("error calling {{operationId}}: ") + response.reason_phrase()
+                , response.headers()
                 , std::make_shared<std::stringstream>(response.extract_utf8string(true).get()));
         }
 
@@ -277,6 +289,7 @@ pplx::task<{{#returnType}}{{{returnType}}}{{/returnType}}{{^returnType}}void{{/r
             {
                 throw ApiException(500
                     , U("error calling {{operationId}}: unexpected response type: ") + contentType
+                    , response.headers()
                     , std::make_shared<std::stringstream>(response.extract_utf8string(true).get()));
             }
         }
@@ -292,12 +305,18 @@ pplx::task<{{#returnType}}{{{returnType}}}{{/returnType}}{{^returnType}}void{{/r
         return result;
         {{/vendorExtensions.x-codegen-response-ishttpcontent}}
         {{^vendorExtensions.x-codegen-response-ishttpcontent}}
-        return response.extract_string();
+        const auto& headers = response.headers();
+        const auto it = headers.find(U("x-request-id"));
+        auto requestId = it != headers.end() ? utility::conversions::to_utf8string(it->second) : std::string();
+        return response.extract_string().then([=](utility::string_t response)
+        {
+            return pplx::task_from_result<std::pair<std::string, utility::string_t>>(std::make_pair(requestId, response));
+        });
     })
-    .then([=](utility::string_t response)
+    .then([=](std::pair<std::string, utility::string_t> response)
     {
         {{^returnType}}
-        return void();
+        return HttpResponse(response.first.c_str());
         {{/returnType}}
         {{#returnType}}
         {{#returnContainer}}
@@ -309,7 +328,7 @@ pplx::task<{{#returnType}}{{{returnType}}}{{/returnType}}{{^returnType}}void{{/r
 
         if(responseHttpContentType == U("application/json"))
         {
-            web::json::value json = web::json::value::parse(response);
+            web::json::value json = web::json::value::parse(response.second);
 
             {{#isListContainer}}for( auto& item : json.as_array() )
             {
@@ -335,7 +354,7 @@ pplx::task<{{#returnType}}{{{returnType}}}{{/returnType}}{{^returnType}}void{{/r
         }{{#vendorExtensions.x-codegen-response.isString}}
         else if(responseHttpContentType == U("text/plain"))
         {
-            result = response;
+            result = response.second;
         }{{/vendorExtensions.x-codegen-response.isString}}
         // else if(responseHttpContentType == U("multipart/form-data"))
         // {
@@ -347,7 +366,7 @@ pplx::task<{{#returnType}}{{{returnType}}}{{/returnType}}{{^returnType}}void{{/r
                 , U("error calling findPetsByStatus: unsupported response type"));
         }
 
-        return result;
+        return HttpResponseT<{{{returnType}}}>(response.first.c_str(), result);
         {{/returnType}}
         {{/vendorExtensions.x-codegen-response-ishttpcontent}}
     });

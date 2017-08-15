@@ -20,11 +20,9 @@
 #include <cpprest/details/basic_types.h>
 #include <cpprest/http_client.h>
 
-{{#apiNamespaceDeclarations}}
+{{#invokerNamespaceDeclarations}}
 namespace {{this}} {
-{{/apiNamespaceDeclarations}}
-
-using namespace {{modelNamespace}};
+{{/invokerNamespaceDeclarations}}
 
 class {{declspec}} ApiClient
 {
@@ -70,8 +68,8 @@ protected:
     std::shared_ptr<ApiConfiguration> m_Configuration;
 };
 
-{{#apiNamespaceDeclarations}}
+{{#invokerNamespaceDeclarations}}
 }
-{{/apiNamespaceDeclarations}}
+{{/invokerNamespaceDeclarations}}
 
 #endif /* ApiClient_H_ */

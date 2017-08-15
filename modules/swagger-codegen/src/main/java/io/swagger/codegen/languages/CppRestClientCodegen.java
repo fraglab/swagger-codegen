@@ -19,6 +19,7 @@ public class CppRestClientCodegen extends DefaultCodegen implements CodegenConfi
     protected String packageVersion = "1.0.0";
     protected String declspec = "";
     protected String defaultInclude = "";
+    protected String invokerPackage = "io.swagger.client";
 
     /**
      * Configures the type of generator.
@@ -71,6 +72,8 @@ public class CppRestClientCodegen extends DefaultCodegen implements CodegenConfi
                 this.modelPackage);
         addOption(CodegenConstants.API_PACKAGE, "C++ namespace for apis (convention: name.space.api).",
                 this.apiPackage);
+        addOption(CodegenConstants.INVOKER_PACKAGE, "C++ namespace for client (convention: name.space.client).",
+                this.invokerPackage);
         addOption(CodegenConstants.PACKAGE_VERSION, "C++ package version.", this.packageVersion);
         addOption(DECLSPEC, "C++ preprocessor to place before the class name for handling dllexport/dllimport.",
                 this.declspec);
@@ -91,6 +94,7 @@ public class CppRestClientCodegen extends DefaultCodegen implements CodegenConfi
         supportingFiles.add(new SupportingFile("ihttpbody-header.mustache", "", "IHttpBody.h"));
         supportingFiles.add(new SupportingFile("jsonbody-header.mustache", "", "JsonBody.h"));
         supportingFiles.add(new SupportingFile("jsonbody-source.mustache", "", "JsonBody.cpp"));
+        supportingFiles.add(new SupportingFile("httpresponse-header.mustache", "", "HttpResponse.h"));
         supportingFiles.add(new SupportingFile("httpcontent-header.mustache", "", "HttpContent.h"));
         supportingFiles.add(new SupportingFile("httpcontent-source.mustache", "", "HttpContent.cpp"));
         supportingFiles.add(new SupportingFile("multipart-header.mustache", "", "MultipartFormData.h"));
@@ -119,6 +123,7 @@ public class CppRestClientCodegen extends DefaultCodegen implements CodegenConfi
         importMapping.put("std::map", "#include <map>");
         importMapping.put("std::string", "#include <string>");
         importMapping.put("HttpContent", "#include \"HttpContent.h\"");
+        importMapping.put("HttpResponse", "#include \"HttpResponse.h\"");
         importMapping.put("Object", "#include \"Object.h\"");
         importMapping.put("utility::string_t", "#include <cpprest/details/basic_types.h>");
         importMapping.put("utility::datetime", "#include <cpprest/details/basic_types.h>");
@@ -143,10 +148,16 @@ public class CppRestClientCodegen extends DefaultCodegen implements CodegenConfi
             defaultInclude = additionalProperties.get(DEFAULT_INCLUDE).toString();
         }
 
+        if (additionalProperties.containsKey(CodegenConstants.INVOKER_PACKAGE)) {
+            invokerPackage = additionalProperties.get(CodegenConstants.INVOKER_PACKAGE).toString();
+        }
+
         additionalProperties.put("modelNamespaceDeclarations", modelPackage.split("\\."));
         additionalProperties.put("modelNamespace", modelPackage.replaceAll("\\.", "::"));
         additionalProperties.put("apiNamespaceDeclarations", apiPackage.split("\\."));
         additionalProperties.put("apiNamespace", apiPackage.replaceAll("\\.", "::"));
+        additionalProperties.put("invokerNamespaceDeclarations", invokerPackage.split("\\."));
+        additionalProperties.put("invokerNamespace", invokerPackage.replaceAll("\\.", "::"));
         additionalProperties.put("declspec", declspec);
         additionalProperties.put("defaultInclude", defaultInclude);
     }

@@ -3,11 +3,9 @@
 #include "MultipartFormData.h"
 #include "ModelBase.h"
 
-{{#apiNamespaceDeclarations}}
+{{#invokerNamespaceDeclarations}}
 namespace {{this}} {
-{{/apiNamespaceDeclarations}}
-
-using namespace {{modelNamespace}};
+{{/invokerNamespaceDeclarations}}
 
 ApiClient::ApiClient(std::shared_ptr<ApiConfiguration> configuration )
     : m_Configuration(configuration)
@@ -132,6 +130,6 @@ pplx::task<web::http::http_response> ApiClient::callApi(
     return client.request(request);
 }
 
-{{#apiNamespaceDeclarations}}
+{{#invokerNamespaceDeclarations}}
 }
-{{/apiNamespaceDeclarations}}
+{{/invokerNamespaceDeclarations}}
