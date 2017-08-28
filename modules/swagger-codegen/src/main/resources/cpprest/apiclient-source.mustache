@@ -7,6 +7,73 @@
 namespace {{this}} {
 {{/invokerNamespaceDeclarations}}
 
+void QosEnabledApi::IncRequestsCount(std::string requestName)
+{
+    std::lock_guard<std::mutex> lock(m_requests_lock);
+    ++(m_requests[requestName]);
+}
+
+void QosEnabledApi::DecRequestsCount(std::string requestName)
+{
+    std::lock_guard<std::mutex> lock(m_requests_lock);
+    --(m_requests.at(requestName));
+}
+
+bool QosEnabledApi::IsQosLimitReached(std::string requestName)
+{
+    std::lock_guard<std::mutex> lock(m_requests_lock);
+    auto requestsCount = m_requests.find(requestName);
+    return requestsCount != m_requests.end() && requestsCount->second >= m_qosLimits.at(requestName);
+}
+
+bool QosEnabledApi::IsQosDisabled(std::string requestName)
+{
+    std::lock_guard<std::mutex> lock(m_requests_lock);
+    return m_qosLimits.at(requestName) == ApiClient::QosDisabled;
+}
+
+void QosEnabledApi::SetQosLimit(std::string requestName, int limit)
+{
+    std::lock_guard<std::mutex> lock(m_requests_lock);
+    m_qosLimits[requestName] = limit;
+}
+
+bool QosEnabledApi::TryGetQosLimit(std::string requestName, int& limit)
+{
+    std::lock_guard<std::mutex> lock(m_requests_lock);
+    auto qosLimit = m_qosLimits.find(requestName);
+    
+    if (qosLimit != m_qosLimits.end())
+    {
+        limit = qosLimit->second;
+        return true;
+    }
+
+    return false;
+}
+
+bool QosEnabledApi::TryUpdateQosLimit(std::string requestName, int limit)
+{
+    std::lock_guard<std::mutex> lock(m_requests_lock);
+    auto qosLimit = m_qosLimits.find(requestName);
+
+    if (qosLimit != m_qosLimits.end())
+    {
+        qosLimit->second = limit;
+        return true;
+    }
+
+    return false;
+}
+
+std::map<std::string, int> QosEnabledApi::GetQosLimits()
+{
+    std::lock_guard<std::mutex> lock(m_requests_lock);
+    std::map<std::string, int> qosLimits(m_qosLimits);
+
+    return qosLimits;
+}
+
 ApiClient::ApiClient(std::shared_ptr<ApiConfiguration> configuration )
     : m_Configuration(configuration)
 {
@@ -23,7 +90,6 @@ void ApiClient::setConfiguration(std::shared_ptr<ApiConfiguration> configuration
 {
     m_Configuration = configuration;
 }
-
 
 utility::string_t ApiClient::parameterToString(utility::string_t value)
 {
@@ -51,22 +117,23 @@ pplx::task<web::http::http_response> ApiClient::callApi(
     const std::map<utility::string_t, utility::string_t>& headerParams,
     const std::map<utility::string_t, utility::string_t>& formParams,
     const std::map<utility::string_t, std::shared_ptr<HttpContent>>& fileParams,
-    const utility::string_t& contentType
+    const utility::string_t& contentType,
+    const pplx::cancellation_token& token
 ) const
 {
     if (postBody != nullptr && formParams.size() != 0)
     {
-        throw ApiException(400, U("Cannot have body and form params"));
+        throw ApiException(400, URI("Cannot have body and form params"));
     }
 
     if (postBody != nullptr && fileParams.size() != 0)
     {
-        throw ApiException(400, U("Cannot have body and file params"));
+        throw ApiException(400, URI("Cannot have body and file params"));
     }
 
-    if (fileParams.size() > 0 && contentType != U("multipart/form-data"))
+    if (fileParams.size() > 0 && contentType != URI("multipart/form-data"))
     {
-        throw ApiException(400, U("Operations with file parameters must be called with multipart/form-data"));
+        throw ApiException(400, URI("Operations with file parameters must be called with multipart/form-data"));
     }
 
     web::http::client::http_client client(m_Configuration->getBaseUrl(), m_Configuration->getHttpConfig());
@@ -111,7 +178,7 @@ pplx::task<web::http::http_response> ApiClient::callApi(
             {
                 formData.append_query(kvp.first, kvp.second);
             }
-            request.set_body(formData.query(), U("application/x-www-form-urlencoded"));
+            request.set_body(formData.query(), URI("application/x-www-form-urlencoded"));
         }
     }
 
@@ -127,7 +194,7 @@ pplx::task<web::http::http_response> ApiClient::callApi(
         request.headers().add( web::http::header_names::user_agent, m_Configuration->getUserAgent() );
     }
 
-    return client.request(request);
+    return client.request(request, token);
 }
 
 {{#invokerNamespaceDeclarations}}

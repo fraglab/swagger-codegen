@@ -22,7 +22,7 @@ namespace {{this}} {
 using namespace {{modelNamespace}};
 using namespace {{invokerNamespace}};
 
-class {{declspec}} {{classname}}
+class {{declspec}} {{classname}} : public QosEnabledApi
 {
 public:
     {{classname}}( std::shared_ptr<ApiClient> apiClient );
@@ -35,7 +35,8 @@ public:
     /// {{notes}}
     /// </remarks>
     {{#allParams}}/// <param name="{{paramName}}">{{description}}{{^required}} (optional{{#defaultValue}}, default to {{.}}{{/defaultValue}}){{/required}}</param>{{/allParams}}
-    pplx::task<{{#returnType}}HttpResponseT<{{{returnType}}}>{{/returnType}}{{^returnType}}HttpResponse{{/returnType}}> {{operationId}}({{#allParams}}{{{dataType}}} {{paramName}}{{^required}}{{/required}}{{#hasMore}}, {{/hasMore}}{{/allParams}});
+    pplx::task<{{#returnType}}HttpResponseT<{{{returnType}}}>{{/returnType}}{{^returnType}}HttpResponse{{/returnType}}> {{operationId}}({{#allParams}}{{{dataType}}} {{paramName}}{{^required}}{{/required}}{{#hasMore}}, {{/hasMore}}{{/allParams}}{{#hasParams}}, {{/hasParams}}const pplx::cancellation_token& token = pplx::cancellation_token::none());
+    void {{operationId}}QosLimit(int limit);
     {{/operation}}
 
 protected:

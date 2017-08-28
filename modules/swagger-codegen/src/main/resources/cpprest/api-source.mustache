@@ -21,13 +21,16 @@ using namespace {{invokerNamespace}};
 namespace {
     bool DescribesJsonType(utility::string_t str) 
     {
-        return str.rfind(U("json")) != utility::string_t::npos;
+        return str.rfind(URI("json")) != utility::string_t::npos;
     }
 }
 
 {{classname}}::{{classname}}( std::shared_ptr<ApiClient> apiClient )
     : m_ApiClient(apiClient)
 {
+    {{#operation}}
+    SetQosLimit("{{operationId}}", 1);
+    {{/operation}}
 }
 
 {{classname}}::~{{classname}}()
@@ -35,260 +38,283 @@ namespace {
 }
 
 {{#operation}}
-pplx::task<{{#returnType}}HttpResponseT<{{{returnType}}}>{{/returnType}}{{^returnType}}HttpResponse{{/returnType}}> {{classname}}::{{operationId}}({{#allParams}}{{{dataType}}} {{paramName}}{{^required}}{{/required}}{{#hasMore}}, {{/hasMore}}{{/allParams}})
+pplx::task<{{#returnType}}HttpResponseT<{{{returnType}}}>{{/returnType}}{{^returnType}}HttpResponse{{/returnType}}> {{classname}}::{{operationId}}({{#allParams}}{{{dataType}}} {{paramName}}{{^required}}{{/required}}{{#hasMore}}, {{/hasMore}}{{/allParams}}{{#hasParams}}, {{/hasParams}}const pplx::cancellation_token& token)
 {
-    {{#allParams}}{{#required}}{{^isPrimitiveType}}{{^isContainer}}
-    // verify the required parameter '{{paramName}}' is set
-    if ({{paramName}} == nullptr)
-    {
-        throw ApiException(400, U("Missing required parameter '{{paramName}}' when calling {{classname}}->{{operationId}}"));
-    }
-    {{/isContainer}}{{/isPrimitiveType}}{{/required}}{{/allParams}}
-
-    std::shared_ptr<ApiConfiguration> apiConfiguration( m_ApiClient->getConfiguration() );
-    utility::string_t path = U("{{path}}");
-    {{#pathParams}}boost::replace_all(path, U("{") U("{{baseName}}") U("}"), ApiClient::parameterToString({{{paramName}}}));
-    {{/pathParams}}
-
-    std::map<utility::string_t, utility::string_t> queryParams;
-    std::map<utility::string_t, utility::string_t> headerParams( apiConfiguration->getDefaultHeaders() );
-    std::map<utility::string_t, utility::string_t> formParams;
-    std::map<utility::string_t, std::shared_ptr<HttpContent>> fileParams;
-
-    std::unordered_set<utility::string_t> responseHttpContentTypes;
-    std::unordered_set<utility::string_t>::iterator it;
-
-    {{#produces}}
-    responseHttpContentTypes.insert( U("{{mediaType}}") );
-    {{/produces}}
-
+    pplx::task<web::http::http_response> task;
     utility::string_t responseHttpContentType;
 
-    // use JSON if possible
-    if ( responseHttpContentTypes.size() == 0 )
+    if (!IsQosDisabled("{{operationId}}") && IsQosLimitReached("{{operationId}}"))
     {
+        auto ex = ApiException(429, URI("{{classname}}->{{operationId}} QoS limit reached"));
+        return pplx::task_from_exception<{{#returnType}}HttpResponseT<{{{returnType}}}>{{/returnType}}{{^returnType}}HttpResponse{{/returnType}}>(ex);
+    }
+
+    auto pQosTracker = std::make_shared<QosTracker>("{{operationId}}", shared_from_this());
+
+    try
+    {
+        {{#allParams}}{{#required}}{{^isPrimitiveType}}{{^isContainer}}
+        // verify the required parameter '{{paramName}}' is set
+        if ({{paramName}} == nullptr)
+        {
+            throw ApiException(400, URI("Missing required parameter '{{paramName}}' when calling {{classname}}->{{operationId}}"));
+        }
+        {{/isContainer}}{{/isPrimitiveType}}{{/required}}{{/allParams}}
+        
+        std::shared_ptr<ApiConfiguration> apiConfiguration( m_ApiClient->getConfiguration() );
+        utility::string_t path = URI("{{path}}");
+        {{#pathParams}}boost::replace_all(path, URI("{") URI("{{baseName}}") URI("}"), ApiClient::parameterToString({{{paramName}}}));
+        {{/pathParams}}
+        
+        std::map<utility::string_t, utility::string_t> queryParams;
+        std::map<utility::string_t, utility::string_t> headerParams( apiConfiguration->getDefaultHeaders() );
+        std::map<utility::string_t, utility::string_t> formParams;
+        std::map<utility::string_t, std::shared_ptr<HttpContent>> fileParams;
+        
+        std::unordered_set<utility::string_t> responseHttpContentTypes;
+        std::unordered_set<utility::string_t>::iterator it;
+        
+        {{#produces}}
+        responseHttpContentTypes.insert( URI("{{mediaType}}") );
+        {{/produces}}
+        
+        // use JSON if possible
+        if ( responseHttpContentTypes.size() == 0 )
+        {
+            {{#vendorExtensions.x-codegen-response.isString}}
+            responseHttpContentType = URI("text/plain");
+            {{/vendorExtensions.x-codegen-response.isString}}
+            {{^vendorExtensions.x-codegen-response.isString}}
+            responseHttpContentType = URI("application/json");
+            {{/vendorExtensions.x-codegen-response.isString}}
+        }
+        // any JSON
+        else if ( responseHttpContentTypes.end() != ( it = boost::find_if(responseHttpContentTypes, DescribesJsonType) ) )
+        {
+            responseHttpContentType = *it;
+        }
+        // multipart formdata
+        else if( responseHttpContentTypes.find(URI("multipart/form-data")) != responseHttpContentTypes.end() )
+        {
+            responseHttpContentType = URI("multipart/form-data");
+        }
         {{#vendorExtensions.x-codegen-response.isString}}
-        responseHttpContentType = U("text/plain");
+        // plain text
+        else if( responseHttpContentTypes.find(URI("text/plain")) != responseHttpContentTypes.end() )
+        {
+            responseHttpContentType = URI("text/plain");
+        }
         {{/vendorExtensions.x-codegen-response.isString}}
-        {{^vendorExtensions.x-codegen-response.isString}}
-        responseHttpContentType = U("application/json");
-        {{/vendorExtensions.x-codegen-response.isString}}
-    }
-    // any JSON
-    else if ( responseHttpContentTypes.end() != ( it = boost::find_if(responseHttpContentTypes, DescribesJsonType) ) )
-    {
-        responseHttpContentType = *it;
-    }
-    // multipart formdata
-    else if( responseHttpContentTypes.find(U("multipart/form-data")) != responseHttpContentTypes.end() )
-    {
-        responseHttpContentType = U("multipart/form-data");
-    }
-    {{#vendorExtensions.x-codegen-response.isString}}
-    // plain text
-    else if( responseHttpContentTypes.find(U("text/plain")) != responseHttpContentTypes.end() )
-    {
-        responseHttpContentType = U("text/plain");
-    }
-    {{/vendorExtensions.x-codegen-response.isString}}
-    {{#vendorExtensions.x-codegen-response-ishttpcontent}}
-    else
-    {
-        //It's going to be binary, so just use the first one.
-        responseHttpContentType = *responseHttpContentTypes.begin();
-    }
-    {{/vendorExtensions.x-codegen-response-ishttpcontent}}
-    {{^vendorExtensions.x-codegen-response-ishttpcontent}}
-    else
-    {
-        throw ApiException(400, U("{{classname}}->{{operationId}} does not produce any supported media type"));
-    }
-    {{/vendorExtensions.x-codegen-response-ishttpcontent}}
-
-    headerParams[U("Accept")] = responseHttpContentType;
-
-    std::unordered_set<utility::string_t> consumeHttpContentTypes;
-    {{#consumes}}
-    consumeHttpContentTypes.insert( U("{{mediaType}}") );
-    {{/consumes}}
-
-    {{#allParams}}
-    {{^isBodyParam}}
-    {{^isPathParam}}
-    {{^isPrimitiveType}}{{^isContainer}}if ({{paramName}} != nullptr){{/isContainer}}{{/isPrimitiveType}}
-    {
-        {{#isContainer}}
-        {{#isQueryParam}}
-        queryParams[U("{{baseName}}")] = ApiClient::parameterToArrayString<{{items.datatype}}>({{paramName}});
-        {{/isQueryParam}}
-        {{#isHeaderParam}}
-        headerParams[U("{{baseName}}")] = ApiClient::parameterToArrayString<{{items.datatype}}>({{paramName}});
-        {{/isHeaderParam}}
-        {{#isFormParam}}
-        {{^isFile}}
-        formParams[ U("{{baseName}}") ] = ApiClient::parameterToArrayString<{{items.datatype}}>({{paramName}});
-        {{/isFile}}
-        {{/isFormParam}}
-        {{/isContainer}}
-        {{^isContainer}}
-        {{#isQueryParam}}
-        queryParams[U("{{baseName}}")] = ApiClient::parameterToString({{paramName}});
-        {{/isQueryParam}}
-        {{#isHeaderParam}}
-        headerParams[U("{{baseName}}")] = ApiClient::parameterToString({{paramName}});
-        {{/isHeaderParam}}
-        {{#isFormParam}}
-        {{#isFile}}
-        fileParams[ U("{{baseName}}") ] = {{paramName}};
-        {{/isFile}}
-        {{^isFile}}
-        formParams[ U("{{baseName}}") ] = ApiClient::parameterToString({{paramName}});
-        {{/isFile}}
-        {{/isFormParam}}
-        {{/isContainer}}
-    }
-    {{/isPathParam}}
-    {{/isBodyParam}}
-    {{/allParams}}
-
-    std::shared_ptr<IHttpBody> httpBody;
-    utility::string_t requestHttpContentType;
-
-    // use JSON if possible
-    if ( consumeHttpContentTypes.size() == 0 || consumeHttpContentTypes.end() != ( it = boost::find_if(consumeHttpContentTypes, DescribesJsonType) ) )
-    {
-        requestHttpContentType = *it;
-        {{#bodyParam}}
-        web::json::value json;
-
-        {{#isPrimitiveType}}
-        json = ModelBase::toJson({{paramName}});
-        {{/isPrimitiveType}}
-        {{^isPrimitiveType}}
-        {{#isListContainer}}
+        {{#vendorExtensions.x-codegen-response-ishttpcontent}}
+        else
         {
-            std::vector<web::json::value> jsonArray;
-            for( auto& item : {{paramName}} )
+            //It's going to be binary, so just use the first one.
+            responseHttpContentType = *responseHttpContentTypes.begin();
+        }
+        {{/vendorExtensions.x-codegen-response-ishttpcontent}}
+        {{^vendorExtensions.x-codegen-response-ishttpcontent}}
+        else
+        {
+            throw ApiException(400, URI("{{classname}}->{{operationId}} does not produce any supported media type"));
+        }
+        {{/vendorExtensions.x-codegen-response-ishttpcontent}}
+        
+        headerParams[URI("Accept")] = responseHttpContentType;
+        
+        std::unordered_set<utility::string_t> consumeHttpContentTypes;
+        {{#consumes}}
+        consumeHttpContentTypes.insert( URI("{{mediaType}}") );
+        {{/consumes}}
+        
+        {{#allParams}}
+        {{^isBodyParam}}
+        {{^isPathParam}}
+        {{^isPrimitiveType}}{{^isContainer}}if ({{paramName}} != nullptr){{/isContainer}}{{/isPrimitiveType}}
+        {
+            {{#isContainer}}
+            {{#isQueryParam}}
+            queryParams[URI("{{baseName}}")] = ApiClient::parameterToArrayString<{{items.datatype}}>({{paramName}});
+            {{/isQueryParam}}
+            {{#isHeaderParam}}
+            headerParams[URI("{{baseName}}")] = ApiClient::parameterToArrayString<{{items.datatype}}>({{paramName}});
+            {{/isHeaderParam}}
+            {{#isFormParam}}
+            {{^isFile}}
+            formParams[ URI("{{baseName}}") ] = ApiClient::parameterToArrayString<{{items.datatype}}>({{paramName}});
+            {{/isFile}}
+            {{/isFormParam}}
+            {{/isContainer}}
+            {{^isContainer}}
+            {{#isQueryParam}}
+            queryParams[URI("{{baseName}}")] = ApiClient::parameterToString({{paramName}});
+            {{/isQueryParam}}
+            {{#isHeaderParam}}
+            headerParams[URI("{{baseName}}")] = ApiClient::parameterToString({{paramName}});
+            {{/isHeaderParam}}
+            {{#isFormParam}}
+            {{#isFile}}
+            fileParams[ URI("{{baseName}}") ] = {{paramName}};
+            {{/isFile}}
+            {{^isFile}}
+            formParams[ URI("{{baseName}}") ] = ApiClient::parameterToString({{paramName}});
+            {{/isFile}}
+            {{/isFormParam}}
+            {{/isContainer}}
+        }
+        {{/isPathParam}}
+        {{/isBodyParam}}
+        {{/allParams}}
+        
+        std::shared_ptr<IHttpBody> httpBody;
+        utility::string_t requestHttpContentType;
+        
+        // use JSON if possible
+        if ( consumeHttpContentTypes.size() == 0 || consumeHttpContentTypes.end() != ( it = boost::find_if(consumeHttpContentTypes, DescribesJsonType) ) )
+        {
+            requestHttpContentType = *it;
+            {{#bodyParam}}
+            web::json::value json;
+        
+            {{#isPrimitiveType}}
+            json = ModelBase::toJson({{paramName}});
+            {{/isPrimitiveType}}
+            {{^isPrimitiveType}}
+            {{#isListContainer}}
             {
-                {{#items.isPrimitiveType}}jsonArray.push_back(ModelBase::toJson(item));
-                {{/items.isPrimitiveType}}{{^items.isPrimitiveType}}{{#items.isString}}jsonArray.push_back(ModelBase::toJson(item));
-                {{/items.isString}}{{^items.isString}}{{#items.isDateTime}}jsonArray.push_back(ModelBase::toJson(item));
-                {{/items.isDateTime}}{{^items.isDateTime}}jsonArray.push_back( item.get() ? item->toJson() : web::json::value::null() );
-                {{/items.isDateTime}}{{/items.isString}}{{/items.isPrimitiveType}}
+                std::vector<web::json::value> jsonArray;
+                for( auto& item : {{paramName}} )
+                {
+                    {{#items.isPrimitiveType}}jsonArray.push_back(ModelBase::toJson(item));
+                    {{/items.isPrimitiveType}}{{^items.isPrimitiveType}}{{#items.isString}}jsonArray.push_back(ModelBase::toJson(item));
+                    {{/items.isString}}{{^items.isString}}{{#items.isDateTime}}jsonArray.push_back(ModelBase::toJson(item));
+                    {{/items.isDateTime}}{{^items.isDateTime}}jsonArray.push_back( item.get() ? item->toJson() : web::json::value::null() );
+                    {{/items.isDateTime}}{{/items.isString}}{{/items.isPrimitiveType}}
+                }
+                json = web::json::value::array(jsonArray);
             }
-            json = web::json::value::array(jsonArray);
+            {{/isListContainer}}
+            {{^isListContainer}}
+            json = ModelBase::toJson({{paramName}});
+            {{/isListContainer}}
+            {{/isPrimitiveType}}
+        
+            httpBody = std::shared_ptr<IHttpBody>( new JsonBody( json ) );
+            {{/bodyParam}}
         }
-        {{/isListContainer}}
-        {{^isListContainer}}
-        json = ModelBase::toJson({{paramName}});
-        {{/isListContainer}}
-        {{/isPrimitiveType}}
-
-        httpBody = std::shared_ptr<IHttpBody>( new JsonBody( json ) );
-        {{/bodyParam}}
-    }
-    // multipart formdata
-    else if( consumeHttpContentTypes.find(U("multipart/form-data")) != consumeHttpContentTypes.end() )
-    {
-        requestHttpContentType = U("multipart/form-data");
-        {{#bodyParam}}
-        std::shared_ptr<MultipartFormData> multipart(new MultipartFormData);
-        {{#isPrimitiveType}}
-        multipart->add(ModelBase::toHttpContent("{{paramName}}", {{paramName}}));
-        {{/isPrimitiveType}}
-        {{^isPrimitiveType}}
-        {{#isListContainer}}
+        // multipart formdata
+        else if( consumeHttpContentTypes.find(URI("multipart/form-data")) != consumeHttpContentTypes.end() )
         {
-            std::vector<web::json::value> jsonArray;
-            for( auto& item : {{paramName}} )
+            requestHttpContentType = URI("multipart/form-data");
+            {{#bodyParam}}
+            std::shared_ptr<MultipartFormData> multipart(new MultipartFormData);
+            {{#isPrimitiveType}}
+            multipart->add(ModelBase::toHttpContent("{{paramName}}", {{paramName}}));
+            {{/isPrimitiveType}}
+            {{^isPrimitiveType}}
+            {{#isListContainer}}
             {
-                {{#items.isPrimitiveType}}jsonArray.push_back(ModelBase::toJson(item));
-                {{/items.isPrimitiveType}}{{^items.isPrimitiveType}}{{#items.isString}}jsonArray.push_back(ModelBase::toJson(item));
-                {{/items.isString}}{{^items.isString}}{{#items.isDateTime}}jsonArray.push_back(ModelBase::toJson(item));
-                {{/items.isDateTime}}{{^items.isDateTime}}jsonArray.push_back( item.get() ? item->toJson() : web::json::value::null() );
-                {{/items.isDateTime}}{{/items.isString}}{{/items.isPrimitiveType}}
+                std::vector<web::json::value> jsonArray;
+                for( auto& item : {{paramName}} )
+                {
+                    {{#items.isPrimitiveType}}jsonArray.push_back(ModelBase::toJson(item));
+                    {{/items.isPrimitiveType}}{{^items.isPrimitiveType}}{{#items.isString}}jsonArray.push_back(ModelBase::toJson(item));
+                    {{/items.isString}}{{^items.isString}}{{#items.isDateTime}}jsonArray.push_back(ModelBase::toJson(item));
+                    {{/items.isDateTime}}{{^items.isDateTime}}jsonArray.push_back( item.get() ? item->toJson() : web::json::value::null() );
+                    {{/items.isDateTime}}{{/items.isString}}{{/items.isPrimitiveType}}
+                }
+                multipart->add(ModelBase::toHttpContent(URI("{{paramName}}"), web::json::value::array(jsonArray), URI("application/json")));
             }
-            multipart->add(ModelBase::toHttpContent(U("{{paramName}}"), web::json::value::array(jsonArray), U("application/json")));
+            {{/isListContainer}}
+            {{^isListContainer}}
+            {{#isString}}multipart->add(ModelBase::toHttpContent(URI("{{paramName}}"), {{paramName}}));
+            {{/isString}}
+            {{^isString}}
+            if({{paramName}}.get())
+            {
+                {{paramName}}->toMultipart(multipart, URI("{{paramName}}"));
+            }
+            {{/isString}}
+            {{/isListContainer}}
+            {{/isPrimitiveType}}
+        
+            httpBody = multipart;
+            requestHttpContentType += URI("; boundary=") + multipart->getBoundary();
+            {{/bodyParam}}
         }
-        {{/isListContainer}}
-        {{^isListContainer}}
-        {{#isString}}multipart->add(ModelBase::toHttpContent(U("{{paramName}}"), {{paramName}}));
-        {{/isString}}
-        {{^isString}}
-        if({{paramName}}.get())
+        else
         {
-            {{paramName}}->toMultipart(multipart, U("{{paramName}}"));
+            throw ApiException(415, URI("{{classname}}->{{operationId}} does not consume any supported media type"));
         }
-        {{/isString}}
-        {{/isListContainer}}
-        {{/isPrimitiveType}}
-
-        httpBody = multipart;
-        requestHttpContentType += U("; boundary=") + multipart->getBoundary();
-        {{/bodyParam}}
-    }
-    else
-    {
-        throw ApiException(415, U("{{classname}}->{{operationId}} does not consume any supported media type"));
-    }
-
-    //Set the request content type in the header.
-    headerParams[U("Content-Type")] = requestHttpContentType;
-
-    {{#authMethods}}
-    // authentication ({{name}}) required
-    {{#isApiKey}}
-    {{#isKeyInHeader}}
-    {
-        utility::string_t apiKey = apiConfiguration->getApiKey(U("{{keyParamName}}"));
-        if ( apiKey.size() > 0 )
+        
+        //Set the request content type in the header.
+        headerParams[URI("Content-Type")] = requestHttpContentType;
+        
+        {{#authMethods}}
+        // authentication ({{name}}) required
+        {{#isApiKey}}
+        {{#isKeyInHeader}}
         {
-            headerParams[U("{{keyParamName}}")] = apiKey;
+            utility::string_t apiKey = apiConfiguration->getApiKey(URI("{{keyParamName}}"));
+            if ( apiKey.size() > 0 )
+            {
+                headerParams[URI("{{keyParamName}}")] = apiKey;
+            }
         }
-    }
-    {{/isKeyInHeader}}
-    {{#isKeyInQuery}}
-    {
-        utility::string_t apiKey = apiConfiguration->getApiKey(U("{{keyParamName}}"));
-        if ( apiKey.size() > 0 )
+        {{/isKeyInHeader}}
+        {{#isKeyInQuery}}
         {
-            queryParams[U("{{keyParamName}}")] = apiKey;
+            utility::string_t apiKey = apiConfiguration->getApiKey(URI("{{keyParamName}}"));
+            if ( apiKey.size() > 0 )
+            {
+                queryParams[URI("{{keyParamName}}")] = apiKey;
+            }
         }
-    }
-    {{/isKeyInQuery}}
-    {{/isApiKey}}
-    {{#isBasic}}
-    // Basic authentication is added automatically as part of the http_client_config
-    {{/isBasic}}
-    {{#isOAuth}}
-    // oauth2 authentication is added automatically as part of the http_client_config
-    {{/isOAuth}}
-    {{/authMethods}}
+        {{/isKeyInQuery}}
+        {{/isApiKey}}
+        {{#isBasic}}
+        // Basic authentication is added automatically as part of the http_client_config
+        {{/isBasic}}
+        {{#isOAuth}}
+        // oauth2 authentication is added automatically as part of the http_client_config
+        {{/isOAuth}}
+        {{/authMethods}}
 
-    return m_ApiClient->callApi(path, U("{{httpMethod}}"), queryParams, httpBody, headerParams, formParams, fileParams, requestHttpContentType)
-    .then([=](web::http::http_response response)
+        task = m_ApiClient->callApi(path, URI("{{httpMethod}}"), queryParams, httpBody, headerParams, formParams, fileParams, requestHttpContentType, token);
+    }
+    catch(const ApiException& ex)
     {
+        return pplx::task_from_exception<{{#returnType}}HttpResponseT<{{{returnType}}}>{{/returnType}}{{^returnType}}HttpResponse{{/returnType}}>(ex);
+    }
+    catch(const std::exception& ex)
+    {
+        return pplx::task_from_exception<{{#returnType}}HttpResponseT<{{{returnType}}}>{{/returnType}}{{^returnType}}HttpResponse{{/returnType}}>(ex);
+    }
+
+    return task.then([=](web::http::http_response response)
+    {
+        pQosTracker;
+
         // 1xx - informational : OK
-        // 2xx - successful       : OK
+        // 2xx - successful    : OK
         // 3xx - redirection   : OK
         // 4xx - client error  : not OK
         // 5xx - client error  : not OK
         if (response.status_code() >= 400)
         {
             throw ApiException(response.status_code()
-                , U("error calling {{operationId}}: ") + response.reason_phrase()
+                , URI("error calling {{operationId}}: ") + response.reason_phrase()
                 , response.headers()
                 , std::make_shared<std::stringstream>(response.extract_utf8string(true).get()));
         }
 
         // check response content type
-        if(response.headers().has(U("Content-Type")))
+        if(response.headers().has(URI("Content-Type")))
         {
-            utility::string_t contentType = response.headers()[U("Content-Type")];
+            utility::string_t contentType = response.headers()[URI("Content-Type")];
             if( contentType.find(responseHttpContentType) == std::string::npos )
             {
                 throw ApiException(500
-                    , U("error calling {{operationId}}: unexpected response type: ") + contentType
+                    , URI("error calling {{operationId}}: unexpected response type: ") + contentType
                     , response.headers()
                     , std::make_shared<std::stringstream>(response.extract_utf8string(true).get()));
             }
@@ -296,9 +322,10 @@ pplx::task<{{#returnType}}HttpResponseT<{{{returnType}}}>{{/returnType}}{{^retur
 
         {{#vendorExtensions.x-codegen-response-ishttpcontent}}
         return response.extract_vector();
-    })
+    }, token)
     .then([=](std::vector<unsigned char> response)
     {
+        pQosTracker;
         HttpContent result;
         std::shared_ptr<std::stringstream> stream = std::make_shared<std::stringstream>(std::string(response.begin(), response.end()));
         result.setData(stream);
@@ -306,13 +333,13 @@ pplx::task<{{#returnType}}HttpResponseT<{{{returnType}}}>{{/returnType}}{{^retur
         {{/vendorExtensions.x-codegen-response-ishttpcontent}}
         {{^vendorExtensions.x-codegen-response-ishttpcontent}}
         const auto& headers = response.headers();
-        const auto it = headers.find(U("x-request-id"));
+        const auto it = headers.find(URI("x-request-id"));
         auto requestId = it != headers.end() ? utility::conversions::to_utf8string(it->second) : std::string();
         return response.extract_string().then([=](utility::string_t response)
         {
             return pplx::task_from_result<std::pair<std::string, utility::string_t>>(std::make_pair(requestId, response));
         });
-    })
+    }, token)
     .then([=](std::pair<std::string, utility::string_t> response)
     {
         {{^returnType}}
@@ -326,7 +353,7 @@ pplx::task<{{#returnType}}HttpResponseT<{{{returnType}}}>{{/returnType}}{{^retur
         {{{returnType}}} result({{{defaultResponse}}});
         {{/returnContainer}}
 
-        if(responseHttpContentType == U("application/json"))
+        if(responseHttpContentType == URI("application/json"))
         {
             web::json::value json = web::json::value::parse(response.second);
 
@@ -352,29 +379,32 @@ pplx::task<{{#returnType}}HttpResponseT<{{{returnType}}}>{{/returnType}}{{^retur
             {{/vendorExtensions.x-codegen-response.isPrimitiveType}}{{^vendorExtensions.x-codegen-response.isPrimitiveType}}{{#vendorExtensions.x-codegen-response.isString}}result = ModelBase::stringFromJson(json);
             {{/vendorExtensions.x-codegen-response.isString}}{{^vendorExtensions.x-codegen-response.isString}}result->fromJson(json);{{/vendorExtensions.x-codegen-response.isString}}{{/vendorExtensions.x-codegen-response.isPrimitiveType}}{{/isMapContainer}}{{/isListContainer}}
         }{{#vendorExtensions.x-codegen-response.isString}}
-        else if(responseHttpContentType == U("text/plain"))
+        else if(responseHttpContentType == URI("text/plain"))
         {
             result = response.second;
         }{{/vendorExtensions.x-codegen-response.isString}}
-        // else if(responseHttpContentType == U("multipart/form-data"))
+        // else if(responseHttpContentType == URI("multipart/form-data"))
         // {
         // TODO multipart response parsing
         // }
         else
         {
             throw ApiException(500
-                , U("error calling findPetsByStatus: unsupported response type"));
+                , URI("error calling findPetsByStatus: unsupported response type"));
         }
 
         return HttpResponseT<{{{returnType}}}>(response.first.c_str(), result);
         {{/returnType}}
         {{/vendorExtensions.x-codegen-response-ishttpcontent}}
-    });
+    }, token);
+}
+
+void {{classname}}::{{operationId}}QosLimit(int limit)
+{
+    SetQosLimit("{{operationId}}", limit);
 }
 {{/operation}}
-
 {{#apiNamespaceDeclarations}}
 }
 {{/apiNamespaceDeclarations}}
-
 {{/operations}}

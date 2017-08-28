@@ -21,7 +21,7 @@ ApiException::ApiException( int errorCode
     , m_Content(content)
     , m_Headers(headers)
 {
-    const auto it = m_Headers.find(U("x-request-id"));
+    const auto it = m_Headers.find(URI("x-request-id"));
     m_requestId = it != m_Headers.end() ? utility::conversions::to_utf8string(it->second) : std::string();
 }
 
