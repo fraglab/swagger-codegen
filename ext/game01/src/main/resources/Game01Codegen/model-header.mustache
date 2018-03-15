@@ -1,0 +1,84 @@
+{{>licenseInfo}}
+{{#models}}{{#model}}/*
+ * {{classname}}.h
+ *
+ * {{description}}
+ */
+
+#ifndef {{classname}}_H_
+#define {{classname}}_H_
+
+{{{defaultInclude}}}
+#include "ModelBase.h"
+
+{{#imports}}{{{this}}}
+{{/imports}}
+
+{{#modelNamespaceDeclarations}}
+namespace {{this}} {
+{{/modelNamespaceDeclarations}}
+
+using namespace {{invokerNamespace}};
+
+/// <summary>
+/// {{description}}
+/// </summary>
+class {{declspec}} {{classname}}
+    : public ModelBase
+{
+public:
+    {{classname}}();
+    virtual ~{{classname}}();
+
+    /////////////////////////////////////////////
+    /// ModelBase overrides
+
+    void validate() override;
+
+    web::json::value toJson() const override;
+    void fromJson(web::json::value& json) override;
+
+    void toMultipart(std::shared_ptr<MultipartFormData> multipart, const utility::string_t& namePrefix) const override;
+    void fromMultiPart(std::shared_ptr<MultipartFormData> multipart, const utility::string_t& namePrefix) override;
+
+    /////////////////////////////////////////////
+    /// {{classname}} members
+    {{#vars}}
+    
+    /// <summary>
+    /// {{description}}
+    /// </summary>
+    {{^isNotContainer}}{{{datatype}}}& {{getter}}();
+    {{/isNotContainer}}{{#isNotContainer}}{{{datatype}}} {{getter}}() const;
+    void {{setter}}({{{datatype}}} value);
+    {{/isNotContainer}}{{^required}}bool {{baseName}}IsSet() const;
+    void unset{{name}}();
+    {{/required}}
+    {{/vars}}
+    {{#generateModelNames}}
+
+    /////////////////////////////////////////////
+    /// Generated model name
+
+    static const char* GetModelName() { return m_rawModelDefinitionName; }
+    {{/generateModelNames}}
+
+protected:
+    {{#vars}}{{{datatype}}} m_{{name}};
+    {{^required}}bool m_{{name}}IsSet;
+    {{/required}}
+    {{/vars}}
+{{#generateModelNames}}
+
+private:
+    static constexpr const char* m_rawModelDefinitionName = "{{name}}";
+{{/generateModelNames}}
+};
+
+{{#modelNamespaceDeclarations}}
+}
+{{/modelNamespaceDeclarations}}
+
+#endif /* {{classname}}_H_ */
+{{/model}}
+{{/models}}

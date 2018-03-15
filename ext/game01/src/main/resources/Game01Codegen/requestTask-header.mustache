@@ -1,0 +1,54 @@
+{{>licenseInfo}}
+/*
+ * RequestTask.h
+ *
+ * This class represents a of wrapper around pplx::task + request info
+ */
+
+#ifndef RequestTask_H_
+#define RequestTask_H_
+
+{{{defaultInclude}}}
+
+#include "HttpRequestInfo.h"
+
+{{#invokerNamespaceDeclarations}}
+namespace {{this}} {
+{{/invokerNamespaceDeclarations}}
+
+template <class T>
+class {{declspec}} RequestTask
+{
+public:
+    RequestTask(const HttpRequestInfo& info, const pplx::task<T>& task)
+    : m_info(info)
+    , m_task(task)
+    {}
+
+    RequestTask(const HttpRequestInfo& info, const T& resValue)
+    : m_info(info)
+    , m_task(pplx::task_from_result(resValue))
+    {}
+
+    virtual ~RequestTask() = default;
+
+    const HttpRequestInfo& getRequestInfo() const
+    {
+        return m_info;
+    }
+
+    const pplx::task<T>& getTask() const
+    {
+        return m_task;
+    }
+
+private:
+    HttpRequestInfo m_info;
+    pplx::task<T> m_task;
+};
+
+{{#invokerNamespaceDeclarations}}
+}
+{{/invokerNamespaceDeclarations}}
+
+#endif /* RequestTask_H_ */

@@ -23,6 +23,8 @@ public class CodegenResponse {
     public String jsonSchema;
     public Map<String, Object> vendorExtensions;
 
+    public boolean isCustomError() { return baseType != null && baseType.equalsIgnoreCase("ErrorDesc"); }
+
     @Override
     public String toString() {
         return String.format("%s(%s)", code, containerType);
