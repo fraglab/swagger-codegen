@@ -1,0 +1,65 @@
+{{>licenseInfo}}
+/*
+ * HttpResponse.h
+ *
+ * This class represents a generic http response.
+ */
+
+#ifndef HttpResponse_H_
+#define HttpResponse_H_
+
+{{{defaultInclude}}}
+
+{{#invokerNamespaceDeclarations}}
+namespace {{this}} {
+{{/invokerNamespaceDeclarations}}
+
+class {{declspec}} HttpResponse
+{
+public:
+    HttpResponse() = default;
+
+    HttpResponse(const char* request) : m_requestId(request)
+    {}
+
+    virtual ~HttpResponse() = default;
+
+    const char* getRequestId() const
+    {
+        return m_requestId.c_str();
+    }
+
+private:
+    std::string m_requestId;
+};
+
+template <class T>
+class {{declspec}} HttpResponseT : public HttpResponse
+{
+public:
+    HttpResponseT() = default;
+
+    HttpResponseT(T result) : HttpResponse(), m_result(result)
+    {}
+
+    HttpResponseT(const char* request, T result)
+    : HttpResponse(request)
+    , m_result(result)
+    {}
+
+    virtual ~HttpResponseT() = default;
+
+    const T& getResult() const
+    {
+        return m_result;
+    }
+
+private:
+    T m_result;
+};
+
+{{#invokerNamespaceDeclarations}}
+}
+{{/invokerNamespaceDeclarations}}
+
+#endif /* HttpResponse_H_ */

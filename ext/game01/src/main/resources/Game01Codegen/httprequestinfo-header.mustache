@@ -1,0 +1,48 @@
+{{>licenseInfo}}
+/*
+ * HttpRequestInfo.h
+ *
+ * This class represents a http method + url data structure.
+ */
+
+#ifndef HttpRequestInfo_H_
+#define HttpRequestInfo_H_
+
+{{{defaultInclude}}}
+
+{{#invokerNamespaceDeclarations}}
+namespace {{this}} {
+{{/invokerNamespaceDeclarations}}
+
+class {{declspec}} HttpRequestInfo
+{
+public:
+    HttpRequestInfo() = default;
+
+    HttpRequestInfo(const utility::string_t& httpMethod, const utility::string_t& url)
+    : m_httpMethod(httpMethod)
+    , m_url(url)
+    {}
+
+    virtual ~HttpRequestInfo() = default;
+
+    const utility::string_t& getUrl() const
+    {
+        return m_url;
+    }
+
+    const utility::string_t& getHttpMethod() const
+    {
+        return m_httpMethod;
+    }
+
+private:
+    utility::string_t m_httpMethod;
+    utility::string_t m_url;
+};
+
+{{#invokerNamespaceDeclarations}}
+}
+{{/invokerNamespaceDeclarations}}
+
+#endif /* ApiBase_H_ */

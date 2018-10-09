@@ -1,0 +1,54 @@
+{{>licenseInfo}}
+{{#operations}}/*
+ * {{classname}}.h
+ *
+ * {{description}}
+ */
+
+#ifndef {{classname}}_H_
+#define {{classname}}_H_
+
+{{{defaultInclude}}}
+#include "ApiClient.h"
+#include "HttpResponse.h"
+#include "RequestTask.h"
+
+{{#imports}}{{{import}}}
+{{/imports}}
+
+{{#apiNamespaceDeclarations}}
+namespace {{this}} {
+{{/apiNamespaceDeclarations}}
+
+using namespace {{modelNamespace}};
+using namespace {{invokerNamespace}};
+
+class {{declspec}} {{classname}} : public QosEnabledApi
+{
+public:
+    {{classname}}( std::shared_ptr<ApiClient> apiClient );
+    virtual ~{{classname}}();
+    {{#operation}}
+    /// <summary>
+    /// {{summary}}
+    /// </summary>
+    /// <remarks>
+    /// {{notes}}
+    /// </remarks>
+    {{#allParams}}/// <param name="{{paramName}}">{{description}}{{^required}} (optional{{#defaultValue}}, default to {{.}}{{/defaultValue}}){{/required}}</param>{{/allParams}}
+    RequestTask<{{#returnType}}HttpResponseT<{{{returnType}}}>{{/returnType}}{{^returnType}}HttpResponse{{/returnType}}> {{operationId}}({{#allParams}}{{{dataType}}} {{paramName}}{{^required}}{{/required}}{{#hasMore}}, {{/hasMore}}{{/allParams}}{{#hasParams}}, {{/hasParams}}const pplx::cancellation_token& token = pplx::cancellation_token::none(), RetryInfo&& retryInfo = RetryInfo());
+    HttpRequestInfo {{operationId}}RequestInfo({{#pathParams}}{{{dataType}}} {{paramName}}{{^required}}{{/required}}{{#hasMore}}, {{/hasMore}}{{/pathParams}}) const;
+    void {{operationId}}QosLimit(int limit);
+    {{/operation}}
+
+protected:
+    std::shared_ptr<ApiClient> m_ApiClient;
+};
+
+{{#apiNamespaceDeclarations}}
+}
+{{/apiNamespaceDeclarations}}
+
+#endif /* {{classname}}_H_ */
+
+{{/operations}}

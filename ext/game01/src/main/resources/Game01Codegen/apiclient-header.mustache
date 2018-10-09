@@ -1,0 +1,315 @@
+{{>licenseInfo}}
+/*
+ * ApiClient.h
+ *
+ * This is an API client responsible for stating the HTTP calls
+ */
+
+#ifndef ApiClient_H_
+#define ApiClient_H_
+
+{{{defaultInclude}}}
+#include "ApiConfiguration.h"
+#include "ApiException.h"
+#include "IHttpBody.h"
+#include "HttpContent.h"
+
+#include <assert.h>
+#include <algorithm>
+#include <functional>
+#include <memory>
+#include <vector>
+#include <mutex>
+#include <chrono>
+
+#include <cpprest/details/basic_types.h>
+#include <cpprest/http_client.h>
+#include <pplx/pplx_utils.h>
+
+{{#invokerNamespaceDeclarations}}
+namespace {{this}} {
+{{/invokerNamespaceDeclarations}}
+
+using RetryConditionChecker = std::function<bool(int, const char*)>;
+using RetryDelayProvider = std::function<std::chrono::seconds(unsigned int)>;
+
+template<typename T>
+using Task = pplx::task<T>;
+
+struct RetryInfo
+{
+    static const int NoRetry = -1;
+
+    int requestRetryTimeoutSec { NoRetry };
+    RetryConditionChecker retryConditionChecker { [](int, const char*){ return false; } };
+    RetryDelayProvider retryDelayProvider { nullptr };
+
+    utility::string_t operationId {};
+};
+
+namespace
+{
+    template<typename Exception>
+    int GetErrorCode(const Exception& ex)
+    {
+        return ex.error_code().value();
+    }
+
+    template<>
+    int GetErrorCode(const std::exception& ex)
+    {
+        return std::make_error_code(std::errc::io_error).value();
+    }
+}
+
+namespace Helpers
+{
+    using TimePoint = std::chrono::time_point<std::chrono::system_clock>;
+
+    template<typename T>
+    using TaskCompletionEvent = pplx::task_completion_event<T>;
+
+    template<typename ResultType, typename TaskGenerator>
+    auto InvokeGenerator(TaskGenerator&& gen)
+        -> typename std::enable_if<std::is_same<Task<ResultType>, typename std::result_of<TaskGenerator()>::type>::value, Task<ResultType>>::type
+    {
+        return gen();
+    }
+
+    template<typename T>
+    struct implicitly_movable
+    {
+        implicitly_movable(T&& value) : m_value(std::move(value)) {}
+        implicitly_movable(const implicitly_movable& other) : m_value(std::move(other.m_value)) {}
+
+        implicitly_movable& operator=(implicitly_movable&& aValue) = delete;
+        implicitly_movable& operator=(const implicitly_movable& aValue) = delete;
+
+        T& value() { return m_value; }
+        const T& value() const { return m_value; }
+
+    private:
+        mutable T m_value;
+    };
+
+    template<typename T>
+    auto make_implicitly_movable(T&& value)
+        -> typename std::enable_if<std::is_rvalue_reference<decltype(value)>::value, implicitly_movable<T>>::type
+    {
+        return implicitly_movable<T>(std::forward<T>(value));
+    }
+
+    template<typename ResultType, typename TaskGenerator>
+    void Retry(Task<ResultType>&& originalTask
+             , TaskGenerator&& generator
+             , RetryInfo&& retryInfo
+             , TaskCompletionEvent<ResultType> tce
+             , TimePoint requestStartTime
+             , unsigned int requestRetryAttemptNumber = 0);
+
+    template<typename Exception, typename ResultType, typename TaskGenerator>
+    void RetryOnException(const Exception& exception
+                        , TaskGenerator&& generator
+                        , RetryInfo&& retryInfo
+                        , TaskCompletionEvent<ResultType> tce
+                        , TimePoint requestStartTime
+                        , unsigned int requestRetryAttemptNumber)
+    {
+        auto nextRequestDelay = retryInfo.retryDelayProvider
+                                    ? retryInfo.retryDelayProvider(requestRetryAttemptNumber)
+                                    : std::chrono::seconds::zero();
+
+        auto now = std::chrono::system_clock::now();
+        auto requestTime = std::chrono::duration_cast<std::chrono::seconds>(now - requestStartTime).count();
+        auto isTimeoutReached = requestTime >= retryInfo.requestRetryTimeoutSec;
+
+        if (!retryInfo.retryConditionChecker(GetErrorCode(exception), exception.what()) || isTimeoutReached)
+        {
+            tce.set_exception(exception);
+        }
+        else
+        {
+            if (nextRequestDelay == std::chrono::milliseconds::zero())
+            {
+                Retry(InvokeGenerator<ResultType>(generator)
+                    , std::forward<TaskGenerator>(generator)
+                    , std::forward<RetryInfo>(retryInfo)
+                    , tce
+                    , requestStartTime
+                    , requestRetryAttemptNumber);
+            }
+            else
+            {
+                auto requestTimeLeft = std::chrono::seconds(retryInfo.requestRetryTimeoutSec - requestTime);
+                nextRequestDelay = std::min(nextRequestDelay, requestTimeLeft);
+
+                pplx::complete_after(nextRequestDelay).then(
+                    [ generator = std::forward<TaskGenerator>(generator)
+                    , retryInfo = std::forward<RetryInfo>(retryInfo)
+                    , requestStartTime
+                    , requestRetryAttemptNumber
+                    , tce]() mutable
+                {
+                    Retry(InvokeGenerator<ResultType>(generator), std::move(generator), std::move(retryInfo), tce, requestStartTime, requestRetryAttemptNumber);
+                });
+            }
+        }
+    }
+
+    template<typename ResultType, typename TaskGenerator>
+    void Retry(Task<ResultType>&& originalTask
+             , TaskGenerator&& generator
+             , RetryInfo&& retryInfo
+             , TaskCompletionEvent<ResultType> tce
+             , TimePoint requestStartTime
+             , unsigned int requestRetryAttemptNumber)
+    {
+        originalTask.then(
+            [ generator = std::forward<TaskGenerator>(generator)
+            , retryInfo = std::forward<RetryInfo>(retryInfo)
+            , requestStartTime
+            , requestRetryAttemptNumber
+            , tce](Task<ResultType> task) mutable
+        {
+            try
+            {
+                auto result = task.get();
+                tce.set(result);
+            }
+            catch (common::api::ApiException& ex)
+            {
+                RetryOnException(ex, std::move(generator), std::move(retryInfo), tce, requestStartTime, ++requestRetryAttemptNumber);
+            }
+            catch (web::http::http_exception& ex)
+            {
+                auto msg = utility::conversions::to_string_t(ex.what());
+                msg.erase(std::remove_if(msg.begin(), msg.end(), ::iscntrl), msg.end());
+
+                ApiException aex(GetErrorCode(ex), _XPLATSTR("Error calling ") + retryInfo.operationId + _XPLATSTR(": ") + msg);
+                RetryOnException(aex, std::move(generator), std::move(retryInfo), tce, requestStartTime, ++requestRetryAttemptNumber);
+            }
+            catch (std::exception& ex)
+            {
+                auto msg = utility::conversions::to_string_t(ex.what());
+                msg.erase(std::remove_if(msg.begin(), msg.end(), ::iscntrl), msg.end());
+
+                ApiException aex(GetErrorCode(ex), _XPLATSTR("Error calling ") + retryInfo.operationId + _XPLATSTR(": ") + msg);
+                RetryOnException(aex, std::move(generator), std::move(retryInfo), tce, requestStartTime, ++requestRetryAttemptNumber);
+            }
+        });
+    }
+
+    template<typename ResultType, typename TaskGenerator>
+    Task<ResultType> Retry(TaskGenerator&& generator, RetryInfo&& retryInfo)
+    {
+        TaskCompletionEvent<ResultType> tce;
+
+        Retry(InvokeGenerator<ResultType>(generator)
+            , std::forward<TaskGenerator>(generator)
+            , std::forward<RetryInfo>(retryInfo)
+            , tce
+            , std::chrono::system_clock::now());
+
+        return Task<ResultType>(tce);
+    }
+}
+
+class QosEnabledApi : public std::enable_shared_from_this<QosEnabledApi>
+{
+public:
+    void IncRequestsCount(std::string requestName);
+    void DecRequestsCount(std::string requestName);
+    std::map<std::string, int> GetQosLimits();
+
+    bool TryGetQosLimit(std::string requestName, int& limit);
+    bool TryUpdateQosLimit(std::string requestName, int limit);
+
+protected:
+    using std::enable_shared_from_this<QosEnabledApi>::shared_from_this;
+
+    bool IsQosLimitReached(std::string requestName);
+    bool IsQosDisabled(std::string requestName);
+    void SetQosLimit(std::string requestName, int limit);
+
+private:
+    std::map<std::string, int> m_qosLimits;
+    std::map<std::string, int> m_requests;
+    std::mutex m_requests_lock;
+};
+
+class QosTracker
+{
+public:
+    QosTracker(std::string requestName, std::shared_ptr<QosEnabledApi> pApi)
+    {
+        assert(m_requestName.empty());
+
+        m_requestName = requestName;
+        m_api = pApi;
+
+        m_api->IncRequestsCount(requestName);
+    }
+
+    ~QosTracker()
+    {
+        m_api->DecRequestsCount(m_requestName);
+    }
+
+private:
+    std::string m_requestName;
+    std::shared_ptr<QosEnabledApi> m_api;
+};
+
+class {{declspec}} ApiClient
+{
+public:
+    ApiClient( std::shared_ptr<ApiConfiguration> configuration = nullptr );
+    virtual ~ApiClient();
+
+    std::shared_ptr<ApiConfiguration> getConfiguration() const;
+    void setConfiguration(std::shared_ptr<ApiConfiguration> configuration);
+
+    static utility::string_t parameterToString(utility::string_t value);
+    static utility::string_t parameterToString(int32_t value);
+    static utility::string_t parameterToString(int64_t value);
+    static utility::string_t parameterToString(const utility::datetime &value);
+
+    template<class T>
+    static utility::string_t parameterToArrayString(std::vector<T> value)
+    {
+        utility::stringstream_t ss;
+
+        for( size_t i = 0; i < value.size(); i++)
+        {
+            if( i > 0) ss << _XPLATSTR(", ");
+            ss << ApiClient::parameterToString(value[i]);
+        }
+
+        return ss.str();
+    }
+
+    pplx::task<web::http::http_response> callApi(
+        const utility::string_t& path,
+        const utility::string_t& method,
+        const std::map<utility::string_t, utility::string_t>& queryParams,
+        const std::shared_ptr<IHttpBody> postBody,
+        const std::map<utility::string_t, utility::string_t>& headerParams,
+        const std::map<utility::string_t, utility::string_t>& formParams,
+        const std::map<utility::string_t, std::shared_ptr<HttpContent>>& fileParams,
+        const utility::string_t& contentType,
+        const pplx::cancellation_token& token
+    ) const;
+
+public:
+    static const int QosDisabled = -1;
+
+protected:
+
+    std::shared_ptr<ApiConfiguration> m_Configuration;
+};
+
+{{#invokerNamespaceDeclarations}}
+}
+{{/invokerNamespaceDeclarations}}
+
+#endif /* ApiClient_H_ */
